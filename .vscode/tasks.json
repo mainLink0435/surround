@@ -1,0 +1,65 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "1: Build libopenmpt",
+            "type": "shell",
+            "command": "make -j$(nproc) TEST=0 EXAMPLES=0 OPENMPT123=0 IN_OPENMPT=0 XMP_OPENMPT=0 FUZZ=0",
+            "options": {
+                "cwd": "${workspaceFolder}/openmpt"
+            },c
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "detail": "Builds the libopenmpt static library, a dependency for audiodecoder.openmpt."
+        },
+        {
+            "label": "2: Configure & Build audiodecoder.openmpt",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "-c",
+                "cmake -S ${workspaceFolder}/audiodecoder.openmpt -B ${workspaceFolder}/audiodecoder.openmpt/build && cmake --build ${workspaceFolder}/audiodecoder.openmpt/build && bash ${workspaceFolder}/audiodecoder.openmpt/copy_resources.sh ${workspaceFolder}/audiodecoder.openmpt/build"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "detail": "Configures, builds the audiodecoder.openmpt project and copies addon resources."
+        },
+        {
+            "label": "3: Deploy to CoreELEC",
+            "type": "shell",
+            "command": "ssh root@192.168.1.240 'rm -rf /storage/.kodi/addons/audiodecoder.openmpt' && rsync -av --delete --no-perms --no-owner --no-group -e ssh ${workspaceFolder}/audiodecoder.openmpt/build/audiodecoder.openmpt/ root@192.168.1.240:/storage/.kodi/addons/audiodecoder.openmpt/ && ssh root@192.168.1.240 'systemctl restart kodi'",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "detail": "Deploys the built addon to CoreELEC via SSH and restarts Kodi."
+        },
+        {
+            "label": "4: CMake: Clean audiodecoder.openmpt",
+            "type": "shell",
+            "command": "rm",
+            "args": [
+                "-rf",
+                "${workspaceFolder}/audiodecoder.openmpt/build"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "detail": "Cleans the build directory of the audiodecoder.openmpt project."
+        }
+    ]
+}
