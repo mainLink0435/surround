@@ -61,5 +61,40 @@
             "problemMatcher": [],
             "detail": "Cleans the build directory of the audiodecoder.openmpt project."
         }
+    ,
+    {
+        "label": "Set up armhf QEMU VM chroot",
+        "type": "shell",
+        "command": "bash",
+        "args": [
+            "-c",
+            "CHROOT_DIR=\"/srv/armhf_chroot\"; PROJECT_DIR=\"/home/builder/kodi_project\"; sudo mountpoint -q $CHROOT_DIR/proc || sudo mount -t proc proc $CHROOT_DIR/proc; sudo mountpoint -q $CHROOT_DIR/sys || sudo mount --rbind /sys $CHROOT_DIR/sys; sudo mountpoint -q $CHROOT_DIR/dev || sudo mount --rbind /dev $CHROOT_DIR/dev; sudo mountpoint -q $CHROOT_DIR$PROJECT_DIR || sudo mount --bind $PROJECT_DIR $CHROOT_DIR$PROJECT_DIR; echo 'ARMv7-A environment is mounted and ready.'"
+        ],
+        "problemMatcher": [],
+        "detail": "Mounts system files and project directory for armhf QEMU chroot. Run once per x64 VM boot."
+    },
+    {
+        "label": "Chroot into armhf environment",
+        "type": "shell",
+        "command": "sudo",
+        "args": [
+            "chroot",
+            "/srv/armhf_chroot",
+            "/bin/bash"
+        ],
+        "problemMatcher": [],
+        "detail": "Chroot into the armhf environment to run commands as if on an armhf system."
+    },
+    {
+        "label": "Cleanup armhf QEMU VM chroot",
+        "type": "shell",
+        "command": "bash",
+        "args": [
+            "-c",
+            "CHROOT_DIR=\"/srv/armhf_chroot\"; PROJECT_DIR=\"/home/builder/kodi_project\"; sudo umount $CHROOT_DIR$PROJECT_DIR; sudo umount $CHROOT_DIR/proc; sudo umount $CHROOT_DIR/sys; sudo umount $CHROOT_DIR/dev; echo 'Chroot cleanup complete.'"
+        ],
+        "problemMatcher": [],
+        "detail": "Unmounts project folder and system files from the chroot. Run when all work is done."
+    }
     ]
 }
