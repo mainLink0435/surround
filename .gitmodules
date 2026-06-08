@@ -1,0 +1,8 @@
+[submodule "openmpt"]
+	path = openmpt
+	url = https://github.com/mainLink0435/openmpt.git
+	branch = surround-clean
+[submodule "audiodecoder.openmpt"]
+	path = audiodecoder.openmpt
+	url = https://github.com/mainLink0435/audiodecoder.openmpt.git
+	branch = surround-clean

@@ -1,0 +1,430 @@
+name: Cross-Compile Surround Build
+
+on:
+  push:
+    branches: [ master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-aarch64-coreelec:
+    name: CoreELEC (AArch64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout surround repo with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Fetch Kodi Omega dev headers
+        run: |
+          git clone --depth 1 --single-branch --filter=blob:none --sparse -b Omega \
+            https://github.com/xbmc/xbmc.git /tmp/xbmc-headers && \
+          cd /tmp/xbmc-headers && \
+          git sparse-checkout set xbmc/addons/kodi-dev-kit && \
+          mkdir -p ${{ github.workspace }}/xbmc-headers/xbmc/addons/kodi-dev-kit && \
+          cp -r xbmc/addons/kodi-dev-kit/include ${{ github.workspace }}/xbmc-headers/xbmc/addons/kodi-dev-kit/
+
+      - name: Generate dockcross script
+        run: docker run --rm dockcross/linux-arm64:latest > dockcross && chmod +x dockcross
+
+      - name: Build libopenmpt engine (AArch64)
+        run: |
+          ./dockcross bash -c "
+            cd /work/openmpt &&
+            make -j$(nproc) TEST=0 EXAMPLES=0 OPENMPT123=0 IN_OPENMPT=0 XMP_OPENMPT=0 FUZZ=0 \
+                 CONFIG=gcc LOCAL_ZLIB=1 MPT_COMPILER_NOVISIBILITY=1 \
+                 install PREFIX=/work/install-shadow/aarch64
+          "
+
+      - name: Build audiodecoder.openmpt addon (AArch64)
+        run: |
+          ./dockcross bash -c "
+            cd /work/audiodecoder.openmpt &&
+            mkdir -p build && cd build &&
+            cmake -DOPENMPT_INCLUDE_DIR=/work/install-shadow/aarch64/include \
+                  -DOPENMPT_LIBRARY=/work/install-shadow/aarch64/lib/libopenmpt.so \
+                  -DKODI_INCLUDE_DIR=/work/xbmc-headers/xbmc/addons/kodi-dev-kit/include \
+                  .. &&
+            make -j$(nproc)
+          "
+
+      - name: Package addon zip
+        run: |
+          mkdir -p addon-pack/audiodecoder.openmpt
+          cp install-shadow/aarch64/lib/libopenmpt.so.6 addon-pack/audiodecoder.openmpt/
+          cp audiodecoder.openmpt/build/audiodecoder.openmpt.so addon-pack/audiodecoder.openmpt/
+          sed -e 's/@ADDON_DEPENDS@//g' \
+              -e 's/@PLATFORM@/linux/g' \
+              -e 's/@LIBRARY_FILENAME@/audiodecoder.openmpt.so/g' \
+              audiodecoder.openmpt/audiodecoder.openmpt/addon.xml.in \
+              > addon-pack/audiodecoder.openmpt/addon.xml
+          cp -r audiodecoder.openmpt/audiodecoder.openmpt/resources addon-pack/audiodecoder.openmpt/ 2>/dev/null || true
+          cp audiodecoder.openmpt/audiodecoder.openmpt/icon.png addon-pack/audiodecoder.openmpt/ 2>/dev/null || true
+          cp audiodecoder.openmpt/audiodecoder.openmpt/fanart.jpg addon-pack/audiodecoder.openmpt/ 2>/dev/null || true
+          cd addon-pack && zip -r ../audiodecoder.openmpt-coreelec-aarch64.zip audiodecoder.openmpt/
+
+      - name: Upload addon zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: coreelec-aarch64
+          path: audiodecoder.openmpt-coreelec-aarch64.zip
+
+  build-android-armv7:
+    name: Chromecast (Android ARMv7)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout surround repo with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Fetch Kodi Omega dev headers
+        run: |
+          git clone --depth 1 --single-branch --filter=blob:none --sparse -b Omega \
+            https://github.com/xbmc/xbmc.git /tmp/xbmc-headers && \
+          cd /tmp/xbmc-headers && \
+          git sparse-checkout set xbmc/addons/kodi-dev-kit && \
+          mkdir -p ${{ github.workspace }}/xbmc-headers/xbmc/addons/kodi-dev-kit && \
+          cp -r xbmc/addons/kodi-dev-kit/include ${{ github.workspace }}/xbmc-headers/xbmc/addons/kodi-dev-kit/
+
+      - name: Generate dockcross script
+        run: docker run --rm dockcross/android-arm:latest > dockcross && chmod +x dockcross
+
+      - name: Build libopenmpt engine (ARMv7 Android)
+        run: |
+          ./dockcross bash -c "
+            cd /work/openmpt &&
+            make -j$(nproc) TEST=0 EXAMPLES=0 OPENMPT123=0 IN_OPENMPT=0 XMP_OPENMPT=0 FUZZ=0 \
+                 CONFIG=clang LOCAL_ZLIB=1 MPT_COMPILER_NOVISIBILITY=1 \
+                 install PREFIX=/work/install-shadow/android-armv7
+          "
+
+      - name: Build audiodecoder.openmpt addon (Android ARMv7)
+        run: |
+          ./dockcross bash -c "
+            cd /work/audiodecoder.openmpt &&
+            mkdir -p build && cd build &&
+            cmake -DOPENMPT_INCLUDE_DIR=/work/install-shadow/android-armv7/include \
+                  -DOPENMPT_LIBRARY=/work/install-shadow/android-armv7/lib/libopenmpt.a \
+                  -DKODI_INCLUDE_DIR=/work/xbmc-headers/xbmc/addons/kodi-dev-kit/include \
+                  -DANDROID=TRUE \
+                  .. &&
+            make -j$(nproc)
+          "
+
+      - name: Package addon zip
+        run: |
+          mkdir -p addon-pack/audiodecoder.openmpt
+          cp audiodecoder.openmpt/build/audiodecoder.openmpt.so addon-pack/audiodecoder.openmpt/
+          sed -e 's/@ADDON_DEPENDS@//g' \
+              -e 's/@PLATFORM@/android/g' \
+              -e 's/@LIBRARY_FILENAME@/audiodecoder.openmpt.so/g' \
+              audiodecoder.openmpt/audiodecoder.openmpt/addon.xml.in \
+              > addon-pack/audiodecoder.openmpt/addon.xml
+          cp -r audiodecoder.openmpt/audiodecoder.openmpt/resources addon-pack/audiodecoder.openmpt/ 2>/dev/null || true
+          cp audiodecoder.openmpt/audiodecoder.openmpt/icon.png addon-pack/audiodecoder.openmpt/ 2>/dev/null || true
+          cp audiodecoder.openmpt/audiodecoder.openmpt/fanart.jpg addon-pack/audiodecoder.openmpt/ 2>/dev/null || true
+          cd addon-pack && zip -r ../audiodecoder.openmpt-android-armv7.zip audiodecoder.openmpt/
+
+      - name: Upload addon zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-armv7
+          path: audiodecoder.openmpt-android-armv7.zip
+          if-no-files-found: error
+
+  build-android-arm64:
+    name: Android (arm64-v8a)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout surround repo with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Fetch Kodi Omega dev headers
+        run: |
+          git clone --depth 1 --single-branch --filter=blob:none --sparse -b Omega \
+            https://github.com/xbmc/xbmc.git /tmp/xbmc-headers && \
+          cd /tmp/xbmc-headers && \
+          git sparse-checkout set xbmc/addons/kodi-dev-kit && \
+          mkdir -p ${{ github.workspace }}/xbmc-headers/xbmc/addons/kodi-dev-kit && \
+          cp -r xbmc/addons/kodi-dev-kit/include ${{ github.workspace }}/xbmc-headers/xbmc/addons/kodi-dev-kit/
+
+      - name: Generate dockcross script
+        run: docker run --rm dockcross/android-arm64:latest > dockcross && chmod +x dockcross
+
+      - name: Build libopenmpt engine (arm64 Android)
+        run: |
+          ./dockcross bash -c "
+            cd /work/openmpt &&
+            make -j$(nproc) TEST=0 EXAMPLES=0 OPENMPT123=0 IN_OPENMPT=0 XMP_OPENMPT=0 FUZZ=0 \
+                 CONFIG=clang LOCAL_ZLIB=1 MPT_COMPILER_NOVISIBILITY=1 \
+                 install PREFIX=/work/install-shadow/android-arm64
+          "
+
+      - name: Build audiodecoder.openmpt addon (arm64 Android)
+        run: |
+          ./dockcross bash -c "
+            cd /work/audiodecoder.openmpt &&
+            mkdir -p build && cd build &&
+            cmake -DOPENMPT_INCLUDE_DIR=/work/install-shadow/android-arm64/include \
+                  -DOPENMPT_LIBRARY=/work/install-shadow/android-arm64/lib/libopenmpt.a \
+                  -DKODI_INCLUDE_DIR=/work/xbmc-headers/xbmc/addons/kodi-dev-kit/include \
+                  -DANDROID=TRUE \
+                  .. &&
+            make -j$(nproc)
+          "
+
+      - name: Package addon zip
+        run: |
+          mkdir -p addon-pack/audiodecoder.openmpt
+          cp audiodecoder.openmpt/build/audiodecoder.openmpt.so addon-pack/audiodecoder.openmpt/
+          sed -e 's/@ADDON_DEPENDS@//g' \
+              -e 's/@PLATFORM@/android/g' \
+              -e 's/@LIBRARY_FILENAME@/audiodecoder.openmpt.so/g' \
+              audiodecoder.openmpt/audiodecoder.openmpt/addon.xml.in \
+              > addon-pack/audiodecoder.openmpt/addon.xml
+          cp -r audiodecoder.openmpt/audiodecoder.openmpt/resources addon-pack/audiodecoder.openmpt/ 2>/dev/null || true
+          cp audiodecoder.openmpt/audiodecoder.openmpt/icon.png addon-pack/audiodecoder.openmpt/ 2>/dev/null || true
+          cp audiodecoder.openmpt/audiodecoder.openmpt/fanart.jpg addon-pack/audiodecoder.openmpt/ 2>/dev/null || true
+          cd addon-pack && zip -r ../audiodecoder.openmpt-android-arm64.zip audiodecoder.openmpt/
+
+      - name: Upload addon zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-arm64
+          path: audiodecoder.openmpt-android-arm64.zip
+          if-no-files-found: error
+
+  build-linux-x64:
+    name: Linux (x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout surround repo with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Fetch Kodi Omega dev headers
+        run: |
+          git clone --depth 1 --single-branch --filter=blob:none --sparse -b Omega \
+            https://github.com/xbmc/xbmc.git /tmp/xbmc-headers && \
+          cd /tmp/xbmc-headers && \
+          git sparse-checkout set xbmc/addons/kodi-dev-kit && \
+          mkdir -p ${{ github.workspace }}/xbmc-headers/xbmc/addons/kodi-dev-kit && \
+          cp -r xbmc/addons/kodi-dev-kit/include ${{ github.workspace }}/xbmc-headers/xbmc/addons/kodi-dev-kit/
+
+      - name: Generate dockcross script
+        run: docker run --rm dockcross/linux-x64:latest > dockcross && chmod +x dockcross
+
+      - name: Build libopenmpt engine (x86_64)
+        run: |
+          ./dockcross bash -c "
+            cd /work/openmpt &&
+            make -j$(nproc) TEST=0 EXAMPLES=0 OPENMPT123=0 IN_OPENMPT=0 XMP_OPENMPT=0 FUZZ=0 \
+                 CONFIG=gcc LOCAL_ZLIB=1 MPT_COMPILER_NOVISIBILITY=1 \
+                 install PREFIX=/work/install-shadow/linux-x64
+          "
+
+      - name: Build audiodecoder.openmpt addon (x86_64)
+        run: |
+          ./dockcross bash -c "
+            cd /work/audiodecoder.openmpt &&
+            mkdir -p build && cd build &&
+            cmake -DOPENMPT_INCLUDE_DIR=/work/install-shadow/linux-x64/include \
+                  -DOPENMPT_LIBRARY=/work/install-shadow/linux-x64/lib/libopenmpt.so \
+                  -DKODI_INCLUDE_DIR=/work/xbmc-headers/xbmc/addons/kodi-dev-kit/include \
+                  .. &&
+            make -j$(nproc)
+          "
+
+      - name: Package addon zip
+        run: |
+          mkdir -p addon-pack/audiodecoder.openmpt
+          cp install-shadow/linux-x64/lib/libopenmpt.so.6 addon-pack/audiodecoder.openmpt/
+          cp audiodecoder.openmpt/build/audiodecoder.openmpt.so addon-pack/audiodecoder.openmpt/
+          sed -e 's/@ADDON_DEPENDS@//g' \
+              -e 's/@PLATFORM@/linux/g' \
+              -e 's/@LIBRARY_FILENAME@/audiodecoder.openmpt.so/g' \
+              audiodecoder.openmpt/audiodecoder.openmpt/addon.xml.in \
+              > addon-pack/audiodecoder.openmpt/addon.xml
+          cp -r audiodecoder.openmpt/audiodecoder.openmpt/resources addon-pack/audiodecoder.openmpt/ 2>/dev/null || true
+          cp audiodecoder.openmpt/audiodecoder.openmpt/icon.png addon-pack/audiodecoder.openmpt/ 2>/dev/null || true
+          cp audiodecoder.openmpt/audiodecoder.openmpt/fanart.jpg addon-pack/audiodecoder.openmpt/ 2>/dev/null || true
+          cd addon-pack && zip -r ../audiodecoder.openmpt-linux-x64.zip audiodecoder.openmpt/
+
+      - name: Upload addon zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: audiodecoder.openmpt-linux-x64.zip
+
+  build-armv7-libreelec:
+    name: LibreELEC (ARMv7)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout surround repo with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Fetch Kodi Omega dev headers
+        run: |
+          git clone --depth 1 --single-branch --filter=blob:none --sparse -b Omega \
+            https://github.com/xbmc/xbmc.git /tmp/xbmc-headers && \
+          cd /tmp/xbmc-headers && \
+          git sparse-checkout set xbmc/addons/kodi-dev-kit && \
+          mkdir -p ${{ github.workspace }}/xbmc-headers/xbmc/addons/kodi-dev-kit && \
+          cp -r xbmc/addons/kodi-dev-kit/include ${{ github.workspace }}/xbmc-headers/xbmc/addons/kodi-dev-kit/
+
+      - name: Generate dockcross script
+        run: docker run --rm dockcross/linux-armv7:latest > dockcross && chmod +x dockcross
+
+      - name: Build libopenmpt engine (ARMv7)
+        run: |
+          ./dockcross bash -c "
+            cd /work/openmpt &&
+            make -j$(nproc) TEST=0 EXAMPLES=0 OPENMPT123=0 IN_OPENMPT=0 XMP_OPENMPT=0 FUZZ=0 \
+                 CONFIG=gcc LOCAL_ZLIB=1 MPT_COMPILER_NOVISIBILITY=1 \
+                 install PREFIX=/work/install-shadow/armv7
+          "
+
+      - name: Build audiodecoder.openmpt addon (ARMv7)
+        run: |
+          ./dockcross bash -c "
+            cd /work/audiodecoder.openmpt &&
+            mkdir -p build && cd build &&
+            cmake -DOPENMPT_INCLUDE_DIR=/work/install-shadow/armv7/include \
+                  -DOPENMPT_LIBRARY=/work/install-shadow/armv7/lib/libopenmpt.so \
+                  -DKODI_INCLUDE_DIR=/work/xbmc-headers/xbmc/addons/kodi-dev-kit/include \
+                  .. &&
+            make -j$(nproc)
+          "
+
+      - name: Package addon zip
+        run: |
+          mkdir -p addon-pack/audiodecoder.openmpt
+          cp install-shadow/armv7/lib/libopenmpt.so.6 addon-pack/audiodecoder.openmpt/
+          cp audiodecoder.openmpt/build/audiodecoder.openmpt.so addon-pack/audiodecoder.openmpt/
+          sed -e 's/@ADDON_DEPENDS@//g' \
+              -e 's/@PLATFORM@/linux/g' \
+              -e 's/@LIBRARY_FILENAME@/audiodecoder.openmpt.so/g' \
+              audiodecoder.openmpt/audiodecoder.openmpt/addon.xml.in \
+              > addon-pack/audiodecoder.openmpt/addon.xml
+          cp -r audiodecoder.openmpt/audiodecoder.openmpt/resources addon-pack/audiodecoder.openmpt/ 2>/dev/null || true
+          cp audiodecoder.openmpt/audiodecoder.openmpt/icon.png addon-pack/audiodecoder.openmpt/ 2>/dev/null || true
+          cp audiodecoder.openmpt/audiodecoder.openmpt/fanart.jpg addon-pack/audiodecoder.openmpt/ 2>/dev/null || true
+          cd addon-pack && zip -r ../audiodecoder.openmpt-libreelec-armv7.zip audiodecoder.openmpt/
+
+      - name: Upload addon zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: libreelec-armv7
+          path: audiodecoder.openmpt-libreelec-armv7.zip
+
+  build-windows-x64:
+    name: Windows (x86_64) — EXPERIMENTAL
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout surround repo with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Fetch Kodi Omega dev headers
+        run: |
+          git clone --depth 1 --single-branch --filter=blob:none --sparse -b Omega \
+            https://github.com/xbmc/xbmc.git /tmp/xbmc-headers && \
+          cd /tmp/xbmc-headers && \
+          git sparse-checkout set xbmc/addons/kodi-dev-kit && \
+          mkdir -p ${{ github.workspace }}/xbmc-headers/xbmc/addons/kodi-dev-kit && \
+          cp -r xbmc/addons/kodi-dev-kit/include ${{ github.workspace }}/xbmc-headers/xbmc/addons/kodi-dev-kit/
+
+      - name: Generate dockcross script
+        run: docker run --rm dockcross/windows-x64:latest > dockcross && chmod +x dockcross
+
+      - name: Build libopenmpt engine (Windows x64)
+        run: |
+          ./dockcross bash -c "
+            cd /work/openmpt &&
+            make -j$(nproc) TEST=0 EXAMPLES=0 OPENMPT123=0 IN_OPENMPT=0 XMP_OPENMPT=0 FUZZ=0 \
+                 CONFIG=gcc LOCAL_ZLIB=1 MPT_COMPILER_NOVISIBILITY=1 \
+                 install PREFIX=/work/install-shadow/windows-x64
+          "
+
+      - name: Build audiodecoder.openmpt addon (Windows x64)
+        run: |
+          ./dockcross bash -c "
+            cd /work/audiodecoder.openmpt &&
+            mkdir -p build && cd build &&
+            cmake -DOPENMPT_INCLUDE_DIR=/work/install-shadow/windows-x64/include \
+                  -DOPENMPT_LIBRARY=/work/install-shadow/windows-x64/lib/libopenmpt.so \
+                  -DKODI_INCLUDE_DIR=/work/xbmc-headers/xbmc/addons/kodi-dev-kit/include \
+                  .. &&
+            make -j$(nproc)
+          "
+
+      - name: Package addon zip
+        run: |
+          mkdir -p addon-pack/audiodecoder.openmpt
+          cp install-shadow/windows-x64/lib/libopenmpt.so.6 addon-pack/audiodecoder.openmpt/ 2>/dev/null || true
+          cp audiodecoder.openmpt/build/audiodecoder.openmpt.so addon-pack/audiodecoder.openmpt/ 2>/dev/null || true
+          sed -e 's/@ADDON_DEPENDS@//g' \
+              -e 's/@PLATFORM@/windows/g' \
+              -e 's/@LIBRARY_FILENAME@/audiodecoder.openmpt.dll/g' \
+              audiodecoder.openmpt/audiodecoder.openmpt/addon.xml.in \
+              > addon-pack/audiodecoder.openmpt/addon.xml 2>/dev/null || true
+          cp -r audiodecoder.openmpt/audiodecoder.openmpt/resources addon-pack/audiodecoder.openmpt/ 2>/dev/null || true
+          cp audiodecoder.openmpt/audiodecoder.openmpt/icon.png addon-pack/audiodecoder.openmpt/ 2>/dev/null || true
+          cp audiodecoder.openmpt/audiodecoder.openmpt/fanart.jpg addon-pack/audiodecoder.openmpt/ 2>/dev/null || true
+          cd addon-pack && zip -r ../audiodecoder.openmpt-windows-x64.zip audiodecoder.openmpt/ 2>/dev/null || true
+
+      - name: Upload addon zip (if any)
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: audiodecoder.openmpt-windows-x64.zip
+          if-no-files-found: warn
+
+  release:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    needs:
+      - build-aarch64-coreelec
+      - build-android-armv7
+      - build-android-arm64
+      - build-linux-x64
+      - build-armv7-libreelec
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+      - name: List release assets
+        run: find release -type f -ls
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          body: |
+            Automated build release ${{ github.ref_name }}
+
+            ## Addon Zips
+            Each zip contains a complete Kodi addon ready to install via `Install from zip`.
+
+            - `audiodecoder.openmpt-coreelec-aarch64.zip` — CoreELEC (AArch64)
+            - `audiodecoder.openmpt-android-armv7.zip` — Chromecast / Android ARMv7
+            - `audiodecoder.openmpt-android-arm64.zip` — NVIDIA Shield / Android arm64-v8a
+            - `audiodecoder.openmpt-linux-x64.zip` — Desktop Linux (x86_64)
+            - `audiodecoder.openmpt-libreelec-armv7.zip` — LibreELEC (ARMv7)
+            - `audiodecoder.openmpt-windows-x64.zip` — Windows (x86_64) [EXPERIMENTAL]
+          files: release/*/*.zip
